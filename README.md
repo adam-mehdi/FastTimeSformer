@@ -23,7 +23,7 @@ You can use the model like any `nn.Module`:
 model = FastTimeSformer(...)
 ```
 
-Or, you can use the fast space-time attention layer directly:
+Or you can use the fast space-time attention layer directly:
 
 ```python
 x = torch.randn(bs, n*f + 1, dim) # n = number of patches, f = number of frames
