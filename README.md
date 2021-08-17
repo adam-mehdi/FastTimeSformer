@@ -26,7 +26,13 @@ model = FastTimeSformer(...)
 Or, you can use the fast space-time attention layer directly:
 
 ```python
-attn = FastSpacetimeAttention(...)
+x = torch.randn(bs, n*f + 1, dim) # n = number of patches, f = number of frames
+
+attn = FastSpacetimeAttention(dim = 128)
+attention = SpacetimeAttention(dim, dim_head = dim_head, heads = heads, dropout = dropout)
+
+time_attended = attention(x, 'b (f n) d', '(b n) f d', n = n)        # attention across frames
+space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention across patches
 ```
 
 ### Citations
