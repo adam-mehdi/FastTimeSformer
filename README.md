@@ -39,7 +39,9 @@ space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention
 ```
 @misc{choromanski2021rethinking,
       title={Rethinking Attention with Performers}, 
-      author={Krzysztof Choromanski and Valerii Likhosherstov and David Dohan and Xingyou Song and Andreea Gane and Tamas Sarlos and Peter Hawkins and Jared Davis and Afroz Mohiuddin and Lukasz Kaiser and David Belanger and Lucy Colwell and Adrian Weller},
+      author={Krzysztof Choromanski and Valerii Likhosherstov and David Dohan and Xingyou Song 
+              and Andreea Gane and Tamas Sarlos and Peter Hawkins and Jared Davis and Afroz Mohiuddin 
+              and Lukasz Kaiser and David Belanger and Lucy Colwell and Adrian Weller},
       year={2021},
       eprint={2009.14794},
       archivePrefix={arXiv},
