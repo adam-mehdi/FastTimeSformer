@@ -8,10 +8,8 @@ from torch import nn, einsum
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
-
-from performer_pytorch.performer_pytorch import linear_attention, gaussian_orthogonal_random_matrix, orthogonal_matrix_chunk, generalized_kernel, softmax_kernel, default, exists
-from timesformer_pytorch.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply_rot_emb
-from timesformer_pytorch.timesformer_pytorch import PreNorm, FeedForward
+from fast_timesformer.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply_rot_emb
+from fast_timesformer.helpers import linear_attention, gaussian_orthogonal_random_matrix, orthogonal_matrix_chunk, generalized_kernel, softmax_kernel, default, exists, PreNorm, FeedForward
 
 
 ################################################# ATTENTION ####################################################
