@@ -12,7 +12,7 @@ FastTimeSformer adapts the divided space-time attention presented in TimeSformer
 ## How to use   
 ```python
 # intall project   
-!pip install https://github.com/fast_timesformer/fast_timesformer
+!pip install https://github.com/adam-mehdi/FastTimeSformer.git
 
 from fast_timesformer.fast_timesformer import FastTimeSformer
 ```
