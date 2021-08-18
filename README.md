@@ -35,7 +35,7 @@ time_attended = attention(x, 'b (f n) d', '(b n) f d', n = n)        # attention
 space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention across patches
 ```
 
-### Citations
+## Citations
 ```
 @misc{choromanski2021rethinking,
       title={Rethinking Attention with Performers}, 
