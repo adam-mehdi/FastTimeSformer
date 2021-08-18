@@ -1,1 +1,1 @@
-from fast_timesformer.fast_timesformer import FastAttention, FastTimeSformer
+from fast_timesformer.model import FastAttention, FastTimeSformer
