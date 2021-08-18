@@ -14,7 +14,7 @@ FastTimeSformer is a video transformer that uses fast, linearly-scaling attentio
 # intall project   
 !pip install git+https://github.com/adam-mehdi/FastTimeSformer.git
 
-from fast_timesformer.fast_timesformer import FastTimeSformer
+from fast_timesformer.model import FastTimeSformer
 ```
 
 You can use the model like any `nn.Module`:
