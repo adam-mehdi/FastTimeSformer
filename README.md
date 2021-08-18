@@ -7,7 +7,7 @@
 </div>
  
 ## Description   
-FastTimeSformer adapts the divided space-time attention presented in TimeSformer to the linear-complexity attention approximation of FAVOR+. Code is drawn from repositories by @lucidrains.
+FastTimeSformer is a video transformer that uses fast, linearly-scaling attention by applying FAVOR+ to divided spacetime attention. Code is adapted from repositories by @lucidrains.
 
 ## How to use   
 ```python
