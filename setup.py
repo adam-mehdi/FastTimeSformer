@@ -3,14 +3,12 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='project',
-    version='0.0.0',
-    description='Describe Your Cool Project',
+    name='FastTimeSformer',
+    version='0.0.1',
+    description='TimeSformer accelerated with linearly-scaling attention',
     author='',
     author_email='',
-    # REPLACE WITH YOUR OWN GITHUB PROJECT LINK
-    url='https://github.com/PyTorchLightning/pytorch-lightning-conference-seed',
-    install_requires=['pytorch-lightning'],
+    url='https://github.com/adam-mehdi/FastTimeSformer.git',
     packages=find_packages(),
 )
 
