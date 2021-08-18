@@ -7,7 +7,7 @@
 </div>
  
 ## Description   
-FastTimeSformer is a video transformer that uses fast, linearly-scaling attention by applying FAVOR+ to divided spacetime attention. Code is adapted from repositories by @lucidrains.
+FastTimeSformer is a video transformer that uses fast, linearly-scaling attention by applying FAVOR+ to divided spacetime attention. Code is adapted from repositories by lucidrains.
 
 ## How to use   
 ```python
@@ -26,7 +26,8 @@ model = FastTimeSformer(...)
 Or you can use the fast space-time attention layer directly:
 
 ```python
-x = torch.randn(bs, n*f + 1, dim) # n = number of patches, f = number of frames
+# n = number of patches, f = number of frames
+x = torch.randn(bs, n*f + 1, dim) 
 
 attn = FastSpacetimeAttention(dim = 128)
 attention = SpacetimeAttention(dim, dim_head = dim_head, heads = heads, dropout = dropout)
