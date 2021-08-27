@@ -46,7 +46,7 @@ class PerformerAttention(nn.Module):
                                Default: `int(dim_heads * math.log(dim_heads)`.
         """
         super().__init__()
-        nb_features = default(nb_features, int(dim_heads * math.log(dim_heads)))
+        nb_features = nb_features if nb_features is not None else int(dim_heads * math.log(dim_heads)))
 
         self.dim_heads = dim_heads
         self.nb_features = nb_features
@@ -56,7 +56,6 @@ class PerformerAttention(nn.Module):
         projection_matrix = self.create_projection()
         self.register_buffer('projection_matrix', projection_matrix)
 
-        self.generalized_attention = generalized_attention
         self.kernel_fn = kernel_fn
 
 
@@ -78,17 +77,57 @@ class PerformerAttention(nn.Module):
         out = attn_fn(q, k, v)
         return out
 
-################################################## FASTFOMRER ATTENTION ############################
+################################################## FASTFORMER ATTENTION ############################
+
+class MultiHeadFastAttention(nn.Module):
+    def __init__(self, dim, n, dim_head = 64, heads = 8, dropout = 0.):
+        """
+        Applies linear complexity fast attention from the fastformer paper.
+
+        Args:
+            dim (int): dimension of each token
+            n (int): size of each input sequence
+            dim_head (int): size of each head for the multi-head attention
+            heads (int): number of heads to for the multi-head attention
+
+        NOTE: Input `x` is of shape (bs, n, dim)
+        """
+        super().__init__()
+
+        self.scale = dim_head**-.5
+        self.dim_head = dim_head
+        inner_dim = dim_head * 
+
+        self.to_qkv = nn.Linear(dim, *3)
+        self.Wq = nn.Linear(dim_head, n)
+        self.Wk = nn.Linear(dim_head, n)
+        self.fc_out = nn.Linear(dim, dim)
+        self.drop = nn.Dropout(dropout)
+        
+
+    def forward(self, x):
+        # create queries, keys, values
+        qo, ko, vo = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(partial(rearrange, pattern = 'b n (h d) -> b h n d', d = self.dim_head), (qo, ko, vo))
+
+        # create global query vector
+        A = F.softmax(self.Wq(q) * self.scale, dim = -1)
+        q_global = reduce(A @ q, 'b h n d -> b h n 1', 'sum')
+
+        # use global query vector to create global key vector
+        p = q_global*k
+        B = F.softmax(self.Wk(p) * self.scale, dim = -1)
+        k_global = reduce(B @ p, 'b h n d -> b h n 1', 'sum')
+
+        # and query residual-like addition
+        u = rearrange(k_global*v, 'b h n d -> b n (h d)')
+        out = self.to_out(u) + qo
+        return out
 
 
+################################################# DIVIDED ATTENTION ################################
 
-
-
-
-
-################################################# DIVIDED ATTENTION ##############################
-
-# Fast Space-time attention layer
+# 3d attention backbone
 class DividedAttention(nn.Module):
     def __init__(
         self,
@@ -103,9 +142,8 @@ class DividedAttention(nn.Module):
         self.scale = dim_head ** -0.5
         inner_dim = dim_head * heads
 
-        self.class_attn = class_attention
-        
-        
+        self.class_attn = RegularAttention
+        attn_types = {'performer': PerformerAttention, 'fastformer': FastformerAttention, 'regular': RegularAttention}
         self.fast_attn = FastAttention(dim_head)
 
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
@@ -198,10 +236,8 @@ class FastTimeSformer(nn.Module):
                             each feed-forward layer.
             rotary_emb (bool): whether to use relative positional encodings using the RoPE
                             technique.
-            attention_type (str): type of accelerated divided attention to use. Options:
-                        - 'fastformer'
-                        - 'performer'
-                        - 'regular'
+            attention_type (str): type of accelerated divided attention to use. Options are
+                            'fastformer', 'performer', or 'regular'.
 
         NOTE: `forward` consumes videos of shape `(b, f, c, h, w)`.
         """
