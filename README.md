@@ -6,7 +6,6 @@
 
 </div>
  
-## Description   
 FastTimeSformer is a video transformer that uses fast, linearly-scaling attention by applying FAVOR+ to divided spacetime attention. Code is adapted from repositories by lucidrains.
 
 ## How to use   
