@@ -12,7 +12,7 @@ from fast_timesformer.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply
 from fast_timesformer.helpers import gaussian_orthogonal_random_matrix, orthogonal_matrix_chunk, generalized_kernel, softmax_kernel, default, exists, PreNorm, FeedForward
 
 
-################################################# ATTENTION ####################################################
+######################################### PERFORMER (FAVOR) ATTENTION ####################################################
 
 # non-causal linear attention
 def linear_attention(q, k, v):
@@ -22,8 +22,8 @@ def linear_attention(q, k, v):
     out = torch.einsum('...de,...nd,...n->...ne', context, q, D_inv)
     return out
   
-# slow attention for class token
-def class_attention(q, k, v, mask = None):
+# regular attention for class token and if specified
+def regular_attention(q, k, v, mask = None):
     sim = einsum('b i d, b j d -> b i j', q, k)
 
     if exists(mask):
@@ -34,9 +34,9 @@ def class_attention(q, k, v, mask = None):
     out = einsum('b i j, b j d -> b i d', attn, v)
     return out
   
-# Attention backbone
-class FastAttention(nn.Module):
-    def __init__(self, dim_heads, nb_features = None, ortho_scaling = 0, causal = False, generalized_attention = False, kernel_fn = nn.ReLU(), no_projection = False):
+# backbone
+class PerformerAttention(nn.Module):
+    def __init__(self, dim_heads, nb_features = None, ortho_scaling = 0, causal = False, kernel_fn = nn.ReLU(), **kwargs):
         """
         Given q, k, v of shape `(B, n_heads, n_tokens, head_dim)`, compute attention approximation a la Performers.
 
@@ -59,18 +59,6 @@ class FastAttention(nn.Module):
         self.generalized_attention = generalized_attention
         self.kernel_fn = kernel_fn
 
-        # if this is turned on, no projection will be used
-        # queries and keys will be softmax-ed as in the original efficient attention paper
-        self.no_projection = no_projection
-
-        self.causal = causal
-        if causal:
-            try:
-                import fast_transformers.causal_product.causal_product_cuda
-                self.causal_linear_fn = partial(causal_linear_attention)
-            except ImportError:
-                print('unable to import cuda code for auto-regressive Performer. will default to the memory inefficient non-cuda version')
-                self.causal_linear_fn = causal_linear_attention_noncuda
 
     @torch.no_grad()
     def redraw_projection_matrix(self, device):
@@ -81,26 +69,27 @@ class FastAttention(nn.Module):
     def forward(self, q, k, v):
         "Shape: (B, heads - gh, N, dim_heads)"
         device = q.device
-
-        if self.no_projection:
-            q = q.softmax(dim = -1)
-            k = torch.exp(k) if self.causal else k.softmax(dim = -2)
-
-        elif self.generalized_attention:
-            create_kernel = partial(generalized_kernel, kernel_fn = self.kernel_fn, projection_matrix = self.projection_matrix, device = device)
-            q, k = map(create_kernel, (q, k))
-
-        else:
-            create_kernel = partial(softmax_kernel, projection_matrix = self.projection_matrix, device = device)
-            q = create_kernel(q, is_query = True) # b*n*h, f, head_dim
-            k = create_kernel(k, is_query = False)
+        
+        create_kernel = partial(softmax_kernel, projection_matrix = self.projection_matrix, device = device)
+        q = create_kernel(q, is_query = True) 
+        k = create_kernel(k, is_query = False)
 
         attn_fn = linear_attention if not self.causal else self.causal_linear_fn
         out = attn_fn(q, k, v)
         return out
 
+################################################## FASTFOMRER ATTENTION ############################
+
+
+
+
+
+
+
+################################################# DIVIDED ATTENTION ##############################
+
 # Fast Space-time attention layer
-class FastSpacetimeAttention(nn.Module):
+class DividedAttention(nn.Module):
     def __init__(
         self,
         dim,
@@ -115,6 +104,8 @@ class FastSpacetimeAttention(nn.Module):
         inner_dim = dim_head * heads
 
         self.class_attn = class_attention
+        
+        
         self.fast_attn = FastAttention(dim_head)
 
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
@@ -127,8 +118,6 @@ class FastSpacetimeAttention(nn.Module):
         h = self.heads
         q, k, v = self.to_qkv(x).chunk(3, dim = -1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h = h), (q, k, v))
-
-        q = q * self.scale
 
         # splice out classification token at index 1
         (cls_q, q_), (cls_k, k_), (cls_v, v_) = map(lambda t: (t[:, :1], t[:, 1:]), (q, k, v))
@@ -168,7 +157,7 @@ class FastSpacetimeAttention(nn.Module):
         return self.to_out(out)
       
 
-################################################################### MODEL ############################
+######################################################## TIMESFORMER ################################
 
 class FastTimeSformer(nn.Module):
     def __init__(
@@ -185,7 +174,8 @@ class FastTimeSformer(nn.Module):
         dim_head = 64,
         attn_dropout = 0.,
         ff_dropout = 0.,
-        rotary_emb = True
+        rotary_emb = True,
+        
     ):
         """
         Video transformer generalized to videos. Approximates divided space-time attention
@@ -208,6 +198,10 @@ class FastTimeSformer(nn.Module):
                             each feed-forward layer.
             rotary_emb (bool): whether to use relative positional encodings using the RoPE
                             technique.
+            attention_type (str): type of accelerated divided attention to use. Options:
+                        - 'fastformer'
+                        - 'performer'
+                        - 'regular'
 
         NOTE: `forward` consumes videos of shape `(b, f, c, h, w)`.
         """
