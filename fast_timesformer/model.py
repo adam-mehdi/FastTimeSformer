@@ -23,20 +23,19 @@ def linear_attention(q, k, v):
     return out
   
 # regular attention for class token and if specified
-def regular_attention(q, k, v, mask = None):
-    sim = einsum('b i d, b j d -> b i j', q, k)
+class RegularAttention(nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
 
-    if exists(mask):
-        max_neg_value = -torch.finfo(sim.dtype).max
-        sim.masked_fill_(~mask, max_neg_value)
-
-    attn = sim.softmax(dim = -1)
-    out = einsum('b i j, b j d -> b i d', attn, v)
-    return out
+    def forward(self, q, k, v):
+        sim = torch.einsum('b i d, b j d -> b i j', q, k)
+        scale = q.shape[-1]**-.5
+        attn = F.Softmax(sim * scale, dim=-1)
+        out = einsum('b i j, b j d -> b i d', attn, v)
+        return out
   
-# backbone
 class PerformerAttention(nn.Module):
-    def __init__(self, dim_heads, nb_features = None, ortho_scaling = 0, causal = False, kernel_fn = nn.ReLU(), **kwargs):
+    def __init__(self, dim_heads = 64, nb_features = None, ortho_scaling = 0, kernel_fn = nn.ReLU(), **kwargs):
         """
         Given q, k, v of shape `(B, n_heads, n_tokens, head_dim)`, compute attention approximation a la Performers.
 
@@ -73,13 +72,12 @@ class PerformerAttention(nn.Module):
         q = create_kernel(q, is_query = True) 
         k = create_kernel(k, is_query = False)
 
-        attn_fn = linear_attention if not self.causal else self.causal_linear_fn
-        out = attn_fn(q, k, v)
+        out = linear_attention(q, k, v)
         return out
 
 ################################################## FASTFORMER ATTENTION ############################
 
-class MultiHeadFastAttention(nn.Module):
+class FastformerAttention3d(nn.Module):
     def __init__(self, dim, n, dim_head = 64, heads = 8, dropout = 0.):
         """
         Applies linear complexity fast attention from the fastformer paper.
@@ -119,11 +117,10 @@ class MultiHeadFastAttention(nn.Module):
         B = F.softmax(self.Wk(p) * self.scale, dim = -1)
         k_global = reduce(B @ p, 'b h n d -> b h n 1', 'sum')
 
-        # and query residual-like addition
+        # element-wise product global query & vector and query residual-like addition
         u = rearrange(k_global*v, 'b h n d -> b n (h d)')
         out = self.to_out(u) + qo
         return out
-
 
 ################################################# DIVIDED ATTENTION ################################
 
@@ -134,7 +131,8 @@ class DividedAttention(nn.Module):
         dim,
         dim_head = 64,
         heads = 8,
-        dropout = 0.
+        dropout = 0.,
+        attn_type = 'fastformer'
     ):
         super().__init__()
         assert dim % heads == 0, 'dimension must be divisible by number of heads'
@@ -142,9 +140,9 @@ class DividedAttention(nn.Module):
         self.scale = dim_head ** -0.5
         inner_dim = dim_head * heads
 
-        self.class_attn = RegularAttention
+        self.class_attn = RegularAttention()
         attn_types = {'performer': PerformerAttention, 'fastformer': FastformerAttention, 'regular': RegularAttention}
-        self.fast_attn = FastAttention(dim_head)
+        self.fast_attn = attn_types['attn_type'](dim_head)
 
         self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
         self.to_out = nn.Sequential(
@@ -264,8 +262,8 @@ class FastTimeSformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNorm(dim, FastSpacetimeAttention(dim, dim_head = dim_head, heads = heads, dropout = attn_dropout)),
-                PreNorm(dim, FastSpacetimeAttention(dim, dim_head = dim_head, heads = heads, dropout = attn_dropout)),
+                PreNorm(dim, FastSpacetimeAttention(dim, dim_head = dim_head, num_frames = num_frames, heads = heads, dropout = attn_dropout)),
+                PreNorm(dim, FastSpacetimeAttention(dim, dim_head = dim_head, num_frames = num_frames, heads = heads, dropout = attn_dropout)),
                 PreNorm(dim, FeedForward(dim, dropout = ff_dropout))
             ]))
 
