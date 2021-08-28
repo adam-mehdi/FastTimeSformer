@@ -94,7 +94,6 @@ class FastformerAttention3d(nn.Module):
 
         self.scale = dim_head**-.5
         self.dim_head = dim_head
-        inner_dim = dim_head * 
 
         self.to_qkv = nn.Linear(dim, *3)
         self.Wq = nn.Linear(dim_head, n)
