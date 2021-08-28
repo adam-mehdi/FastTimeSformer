@@ -45,7 +45,7 @@ class PerformerAttention(nn.Module):
                                Default: `int(dim_heads * math.log(dim_heads)`.
         """
         super().__init__()
-        nb_features = nb_features if nb_features is not None else int(dim_heads * math.log(dim_heads)))
+        nb_features = nb_features if nb_features is not None else int(dim_heads * math.log(dim_heads))
 
         self.dim_heads = dim_heads
         self.nb_features = nb_features
