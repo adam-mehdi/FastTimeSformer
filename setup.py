@@ -9,7 +9,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'fast_timesformer',
   packages = find_packages(),
-  version = '0.1.0',
+  version = '0.1.1',
   license='MIT',
   description = 'TimeSformer accelerated with linearly-scaling attention',
   author = 'Adam Mehdi',
