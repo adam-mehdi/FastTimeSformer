@@ -245,6 +245,9 @@ class FastTimeSformer(nn.Module):
         num_patches = (image_size // patch_size) ** 2
         num_positions = num_frames * num_patches
         patch_dim = channels * patch_size ** 2
+        assert h % p == 0 and w % p == 0, f'height {h} and width {w} of video must be divisible by the patch size {p}'
+        
+        (image_size // patch_size)**2
 
         self.heads = heads
         self.patch_size = patch_size
@@ -273,26 +276,17 @@ class FastTimeSformer(nn.Module):
         )
 
     def forward(self, video, mask = None):
-        b, f, _, h, w, *_, device, p = *video.shape, video.device, self.patch_size
-        assert h % p == 0 and w % p == 0, f'height {h} and width {w} of video must be divisible by the patch size {p}'
-
-        # calculate num patches in height and width dimension, and number of total patches (n)
-
-        hp, wp = (h // p), (w // p)
-        n = hp * wp
+        b, f, _, h, w, *_, device, p, n = *video.shape, video.device, self.patch_size, self.n_patches
 
         # video to patch embeddings
-
         video = rearrange(video, 'b f c (h p1) (w p2) -> b (f h w) (p1 p2 c)', p1 = p, p2 = p)
         tokens = self.to_patch_embedding(video)
 
         # add cls token
-
         cls_token = repeat(self.cls_token, 'n d -> b n d', b = b)
         x =  torch.cat((cls_token, tokens), dim = 1)
 
         # positional embedding
-
         frame_pos_emb = None
         image_pos_emb = None
         if not self.use_rotary_emb:
@@ -302,7 +296,6 @@ class FastTimeSformer(nn.Module):
             image_pos_emb = self.image_rot_emb(hp, wp, device = device)
 
         # calculate masking for uneven number of frames
-
         frame_mask = None
         cls_attn_mask = None
         if exists(mask):
@@ -311,7 +304,6 @@ class FastTimeSformer(nn.Module):
             cls_attn_mask = F.pad(cls_attn_mask, (1, 0), value = True)
 
         # time and space attention
-
         for (time_attn, spatial_attn, ff) in self.layers:
             # Note: Frame mask for `time_attn` removed so that we can apply fast attention.
             x = time_attn(x, 'b (f n) d', '(b n) f d', n = n, cls_mask = cls_attn_mask, rot_emb = frame_pos_emb) + x
