@@ -1,4 +1,4 @@
-################################################# IMPORTS #####################################
+################################################# IMPORTS #######################################################
 
 import math
 from functools import partial
@@ -12,7 +12,7 @@ from fast_timesformer.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply
 from fast_timesformer.helpers import gaussian_orthogonal_random_matrix, orthogonal_matrix_chunk, generalized_kernel, softmax_kernel, default, exists, PreNorm, FeedForward
 
 
-######################################### PERFORMER (FAVOR) ATTENTION ####################################################
+######################################### PERFORMER (FAVOR) ATTENTION #############################################
 
 # non-causal linear attention
 def linear_attention(q, k, v):
@@ -75,7 +75,7 @@ class PerformerAttention(nn.Module):
         out = linear_attention(q, k, v)
         return out
 
-################################################## FASTFORMER ATTENTION ############################
+################################################## FASTFORMER ATTENTION ######################################
 
 class FastformerAttention3d(nn.Module):
     def __init__(self, dim, n, dim_head = 64, heads = 8, dropout = 0.):
@@ -122,7 +122,7 @@ class FastformerAttention3d(nn.Module):
         out = self.to_out(u) + qo
         return out
 
-################################################# DIVIDED ATTENTION ################################
+################################################# DIVIDED ATTENTION #########################################
 
 # 3d attention backbone
 class DividedAttention(nn.Module):
@@ -193,7 +193,7 @@ class DividedAttention(nn.Module):
         return self.to_out(out)
       
 
-######################################################## TIMESFORMER ################################
+######################################################## TIMESFORMER ######################################
 
 class FastTimeSformer(nn.Module):
     def __init__(
