@@ -89,7 +89,7 @@ def rotate_every_two(x):
 
 def apply_rot_emb(q, k, rot_emb):
     # check if sequence includes class token
-    has_cls_token = rot_emb[0].shape[1] != x.shape[1]
+    has_cls_token = rot_emb[0].shape[1] != q.shape[1]
 
     # extract class token to align dimensions
     if has_cls_token:
