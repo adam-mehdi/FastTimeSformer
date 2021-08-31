@@ -6,30 +6,35 @@
 
 </div>
  
-FastTimeSformer is a video transformer that uses fast, linearly-scaling attention by applying FAVOR+ to divided spacetime attention. Code is adapted from repositories by lucidrains.
+TimeSformers are attention-based video classifiers. FastTimeSformer adds the capacity to use accelerated attention approximations. It provides three options: 
+ - `fastformer` implements the linear complexity additive attention mechanism presented in the recent paper, "FastFormer: Additive Attention Can Be All You Need" (Aug 2021)
+ - `performer` provides the linear complexity attention approximation achieved via FAVOR+, a method of sampling orthogonal random features, presented in "Rethinking Attention with Performers" (Sept 2020)
+ - `regular`, the standard quadratic complexity attention used in the TimeSformer Paper, "Is Space-Time Attention All You Need for Video Understanding?" (Feb 2021)
 
 ## How to use   
 ```python
 # intall project   
 !pip install git+https://github.com/adam-mehdi/FastTimeSformer.git
 
+import torch
 from fast_timesformer.model import FastTimeSformer
-```
 
-You can use the model like any `nn.Module`:
-
-```python
+b, f, c, h, w = 16, 5, 3, 128, 128
+x = torch.randn(b, f, c, h, w)
 model = FastTimeSformer(...)
-```
 
+model(x)
+```
+**Under Construction**
 Or you can use the fast space-time attention layer directly:
 
 ```python
-# n = number of patches, f = number of frames
-x = torch.randn(bs, n*f + 1, dim) 
+from fast_timesformer.model import DividedAttention
 
-attn = FastSpacetimeAttention(dim = 128)
-attention = SpacetimeAttention(dim, dim_head = dim_head, heads = heads, dropout = dropout)
+
+x = torch.randn(b, n*f + 1, dim) 
+
+attention = DividedAttention(dim, dim_head = dim_head, heads = heads, dropout = dropout)
 
 time_attended = attention(x, 'b (f n) d', '(b n) f d', n = n)        # attention across frames
 space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention across patches
@@ -48,6 +53,15 @@ space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention
       primaryClass={cs.LG}
 }
 
+@misc{wu2021fastformer,
+      title={Fastformer: Additive Attention Can Be All You Need}, 
+      author={Chuhan Wu and Fangzhao Wu and Tao Qi and Yongfeng Huang and Xing Xie},
+      year={2021},
+      eprint={2108.09084},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+
 @misc{bertasius2021spacetime,
       title={Is Space-Time Attention All You Need for Video Understanding?}, 
       author={Gedas Bertasius and Heng Wang and Lorenzo Torresani},
@@ -57,7 +71,7 @@ space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention
       primaryClass={cs.CV}
 }
 
-The code presented herein are adapted from two of @lucidrain's repositories:
+The code here was built on top of a couple repositories by lucidrains:
 1. [performer_pytorch](https://github.com/lucidrains/performer-pytorch)
 2. [timesformer_pytorch](https://github.com/lucidrains/timesformer-pytorch)
 
