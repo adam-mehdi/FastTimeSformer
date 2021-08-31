@@ -6,10 +6,9 @@ from functools import partial
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
-from einops import rearrange, repeat
+from einops import rearrange, repeat, reduce
 
 from fast_timesformer.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply_rot_emb
-from fast_timesformer.helpers import gaussian_orthogonal_random_matrix, orthogonal_matrix_chunk, generalized_kernel, softmax_kernel, default, exists, PreNorm, FeedForward
 
 
 ################################################# HELPERS #######################################################
