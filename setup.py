@@ -10,7 +10,7 @@ setup(
   name = 'fast_timesformer',
   packages = find_packages(),
   version = '0.1.3',
-  license='MIT',
+  license='Apache',
   description = 'TimeSformer accelerated with linearly-scaling attention',
   author = 'Adam Mehdi',
   author_email = 'adam.mehdi23@gmail.com',
