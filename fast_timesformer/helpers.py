@@ -1,97 +1,3 @@
-import math
-import torch
-from functools import partial
-import torch.nn.functional as F
-from torch import nn
-from einops import rearrange, repeat
-
-# helper functions
-
-def exists(val):
-    return val is not None
-
-def empty(tensor):
-    return tensor.numel() == 0
-
-def default(val, d):
-    return val if exists(val) else d
-
-
-# kernel functions
-
-def softmax_kernel(data, *, projection_matrix, is_query, normalize_data=True, eps=1e-4, device = None):
-    b, h, *_ = data.shape
-
-    data_normalizer = (data.shape[-1] ** -0.25) if normalize_data else 1.
-
-    ratio = (projection_matrix.shape[0] ** -0.5)
-
-    projection = repeat(projection_matrix, 'j d -> b h j d', b = b, h = h)
-    projection = projection.type_as(data)
-
-    data_dash = torch.einsum('...id,...jd->...ij', (data_normalizer * data), projection)
-
-    diag_data = data ** 2
-    diag_data = torch.sum(diag_data, dim=-1)
-    diag_data = (diag_data / 2.0) * (data_normalizer ** 2)
-    diag_data = diag_data.unsqueeze(dim=-1)
-
-    if is_query:
-        data_dash = ratio * (
-            torch.exp(data_dash - diag_data -
-                    torch.max(data_dash, dim=-1, keepdim=True).values) + eps)
-    else:
-        data_dash = ratio * (
-            torch.exp(data_dash - diag_data - torch.max(data_dash)) + eps)
-
-    return data_dash.type_as(data)
-
-def generalized_kernel(data, *, projection_matrix, kernel_fn = nn.ReLU(), kernel_epsilon = 0.001, normalize_data = True, device = None):
-    b, h, *_ = data.shape
-
-    data_normalizer = (data.shape[-1] ** -0.25) if normalize_data else 1.
-
-    if projection_matrix is None:
-        return kernel_fn(data_normalizer * data) + kernel_epsilon
-
-    projection = repeat(projection_matrix, 'j d -> b h j d', b = b, h = h)
-    projection = projection.type_as(data)
-
-    data_dash = torch.einsum('...id,...jd->...ij', (data_normalizer * data), projection)
-
-    data_prime = kernel_fn(data_dash) + kernel_epsilon
-    return data_prime.type_as(data)
-
-def orthogonal_matrix_chunk(cols, device = None):
-    unstructured_block = torch.randn((cols, cols), device = device)
-    q, r = torch.qr(unstructured_block.cpu(), some=True)
-    q, r = map(lambda t: t.to(device), (q, r))
-    return q.t()
-
-def gaussian_orthogonal_random_matrix(nb_rows, nb_columns, scaling = 0, device = None):
-    nb_full_blocks = int(nb_rows / nb_columns)
-
-    block_list = []
-
-    for _ in range(nb_full_blocks):
-        q = orthogonal_matrix_chunk(nb_columns, device = device)
-        block_list.append(q)
-
-    remaining_rows = nb_rows - nb_full_blocks * nb_columns
-    if remaining_rows > 0:
-        q = orthogonal_matrix_chunk(nb_columns, device = device)
-        block_list.append(q[:remaining_rows])
-
-    final_matrix = torch.cat(block_list)
-
-    if scaling == 0:
-        multiplier = torch.randn((nb_rows, nb_columns), device = device).norm(dim = 1)
-    elif scaling == 1:
-        multiplier = math.sqrt((float(nb_columns))) * torch.ones((nb_rows,), device = device)
-    else:
-        raise ValueError(f'Invalid scaling {scaling}')
-
-    return torch.diag(multiplier) @ final_matrix
 
 # classes
 
@@ -126,7 +32,29 @@ class FeedForward(nn.Module):
         return self.net(x)
     
 
+def drop_path(x, drop_prob: float = 0., training: bool = False):
+    """Drop paths (Stochastic Depth) per sample (when applied in main path of residual blocks).
+    This is the same as the DropConnect impl I created for EfficientNet, etc networks, however,
+    the original name is misleading as 'Drop Connect' is a different form of dropout in a separate paper...
+    See discussion: https://github.com/tensorflow/tpu/issues/494#issuecomment-532968956 ... I've opted for
+    changing the layer and argument names to 'drop path' rather than mix DropConnect as a layer name and use
+    'survival rate' as the argument.
+    """
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # work with diff dim tensors, not just 2D ConvNets
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()  # binarize
+    output = x.div(keep_prob) * random_tensor
+    return output
 
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
+    """
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
 
-    
-  
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training)
