@@ -12,15 +12,62 @@ from fast_timesformer.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply
 from fast_timesformer.helpers import gaussian_orthogonal_random_matrix, orthogonal_matrix_chunk, generalized_kernel, softmax_kernel, default, exists, PreNorm, FeedForward
 
 
-######################################### PERFORMER (FAVOR) ATTENTION #############################################
+################################################# HELPERS #######################################################
 
-# non-causal linear attention
-def linear_attention(q, k, v):
-    k_cumsum = k.sum(dim = -2)
-    D_inv = 1. / torch.einsum('...nd,...d->...n', q, k_cumsum.type_as(q))
-    context = torch.einsum('...nd,...ne->...de', k, v)
-    out = torch.einsum('...de,...nd,...n->...ne', context, q, D_inv)
-    return out
+# normalizing
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.fn = fn
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, x, *args, **kwargs):
+        x = self.norm(x)
+        return self.fn(x, *args, **kwargs)
+        
+# feedforward
+class GEGLU(nn.Module):
+    def forward(self, x):
+        x, gates = x.chunk(2, dim = -1)
+        return x * F.gelu(gates)
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, mult = 4, dropout = 0.):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, dim * mult * 2),
+            GEGLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * mult, dim)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+# drop path
+def drop_path(x, drop_prob: float = 0., training: bool = False):
+    if drop_prob == 0. or not training:
+        return x
+    keep_prob = 1 - drop_prob
+    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+    random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+    random_tensor.floor_()
+    output = x.div(keep_prob) * random_tensor
+    return output
+
+class DropPath(nn.Module):
+    """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
+    """
+    def __init__(self, drop_prob=None):
+        super(DropPath, self).__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        return drop_path(x, self.drop_prob, self.training)
+
+
+
+######################################### PERFORMER (FAVOR) ATTENTION #############################################
   
 # regular attention for class token and if specified
 class RegularAttention(nn.Module):
