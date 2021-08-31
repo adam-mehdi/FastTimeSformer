@@ -11,11 +11,23 @@ def rotate_every_two(x):
     return rearrange(x, '... d j -> ... (d j)')
 
 def apply_rot_emb(q, k, rot_emb):
+    # check if sequence includes class token
+    has_cls_token = rot_emb[0].shape[1] != x.shape[1]
+
+    # extract class token to align dimensions
+    if has_cls_token:
+        (q, q_cls), (k, k_cls) = map(lambda x: (x[:,1:,:], x[:,:1,:]), (q, k)) 
+
     sin, cos = rot_emb
     rot_dim = sin.shape[-1]
-    (q, q_pass), (k, k_pass) = map(lambda t: (t[..., :rot_dim], t[..., rot_dim:]), (q, k))
+    (q, q_pass), (k, k_pass) = map(lambda t: (t[:, :, :rot_dim], t[:, :, rot_dim:]), (q, k))
     q, k = map(lambda t: t * cos + rotate_every_two(t) * sin, (q, k))
     q, k = map(lambda t: torch.cat(t, dim = -1), ((q, q_pass), (k, k_pass)))
+
+    # concat back class token if applicable
+    if has_cls_token:
+        q, k = map(lambda t: torch.cat(t, dim = 1), ((q_cls, q), (k_cls, k)))
+
     return q, k
 
 class AxialRotaryEmbedding(nn.Module):
