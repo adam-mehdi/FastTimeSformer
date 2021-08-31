@@ -1,6 +1,6 @@
 from math import log, pi, sqrt
 import torch
-from torch import nn, einsum
+from torch import nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 
@@ -145,7 +145,7 @@ class RotaryEmbedding(nn.Module):
 
     def forward(self, n, device):
         seq = torch.arange(n, device = device)
-        freqs = einsum('i, j -> i j', seq, self.inv_freqs)
+        freqs = torch.einsum('i, j -> i j', seq, self.inv_freqs)
         freqs = torch.cat((freqs, freqs), dim = -1)
         freqs = rearrange(freqs, 'n d -> () n d')
         return freqs.sin(), freqs.cos()
