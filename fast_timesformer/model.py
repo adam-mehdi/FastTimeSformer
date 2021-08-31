@@ -210,7 +210,7 @@ class DividedAttention(nn.Module):
         q_, k_, v_ = map(lambda t: rearrange(t, f'{einops_from} -> {einops_to}', **einops_dims), (q_, k_, v_))
 
         # add rotary embeddings, if applicable
-        if exists(rot_emb):
+        if rot_emb is not None:
             q_, k_ = apply_rot_emb(q_, k_, rot_emb)
 
         # expand cls token keys and values across time or space and concat
@@ -343,7 +343,7 @@ class FastTimeSformer(nn.Module):
         # calculate masking for uneven number of frames
         frame_mask = None
         cls_attn_mask = None
-        if exists(mask):
+        if mask is not None:
 
             cls_attn_mask = repeat(mask, 'b f -> (b h) () (f n)', n = n, h = self.heads)
             cls_attn_mask = F.pad(cls_attn_mask, (1, 0), value = True)
