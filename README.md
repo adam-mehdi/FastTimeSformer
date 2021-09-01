@@ -85,7 +85,7 @@ space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention
       archivePrefix={arXiv},
       primaryClass={cs.CL}
 }
-
+```
 The code here was built on top of a couple repositories by lucidrains:
 1. [performer_pytorch](https://github.com/lucidrains/performer-pytorch)
 2. [timesformer_pytorch](https://github.com/lucidrains/timesformer-pytorch)
