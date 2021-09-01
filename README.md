@@ -22,7 +22,7 @@ I provide extensive documentation in the docstrings... Enjoy!
  
 The following graph measures the runtime of a forward pass through TimeSformer using the different attention techniques. The input clips are of shape `(b, f, c, h, w)` where each element is `(16, 5, 3, x, x)`.
 
-                             ![](https://github.com/adam-mehdi/FastTimeSformer/blob/24343a78fc15ad3a5dd127e4f515fce88fbdf747/attn-runtimes-dark.png)
+![runtime comparison for forward pass](https://github.com/adam-mehdi/FastTimeSformer/blob/24343a78fc15ad3a5dd127e4f515fce88fbdf747/attn-runtimes-dark.png)
 
 - Fastformer outperforms regular attention at mid-to-large image resolutions. Note too that fastformer demands less memory, so in practice we can increase the batch size using it.
 - If you are working with small images or with few frames, using regular attention is optimal.
