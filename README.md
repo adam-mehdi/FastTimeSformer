@@ -8,15 +8,29 @@
  
 The TimeSformer is an attention-based video classifier. FastTimeSformer adds to it accelerated attention approximations. It provides three options: `fastformer`, `performer` and `regular`, all of which support enhanced relative position embeddings.
 
+I provide extensive documentation in the docstrings... Enjoy!
+
 ## Options
 
 - `fastformer` implements the linear complexity additive attention mechanism presented in the recent paper, "FastFormer: Additive Attention Can Be All You Need" (Aug 2021)
 <additive attn mechanism>
-
+![](https://dingyue.ws.126.net/2021/0827/887f9828p00qyhdsf0018d200u000gvg00zk00jz.png)
+ 
  - `performer` provides the linear complexity attention approximation achieved via FAVOR+, a method of sampling orthogonal random features, presented in "Rethinking Attention with Performers" (Sept 2020)
+ 
+![](https://1.bp.blogspot.com/-pQ8s4X2qXjI/X5Ib6nLtxWI/AAAAAAAAGtI/C7dmMqV3Gu0NGYtmi5Gqjkr_Pqun5T2MwCLcBGAsYHQ/s1428/image10.jpg) 
 
  - `regular` is the standard quadratic complexity attention used in the TimeSformer Paper, "Is Space-Time Attention All You Need for Video Understanding?" (Feb 2021)
+ 
+## Relative performance
+ 
+The following graph measures the runtime of a forward pass through TimeSformer using 
 
+- Fastformer outperforms regular attention at mid-to-large image resolutions. Note too that fastformer 
+- If you are working with small images or with few frames, using regular attention is optimal.
+- Performer is not performing. It seems creating the softmax kernel is taking longer than computing the actual quadratic attention map, even for these large inputs. This part of the code is from lucidrain's performer-pytorch repository
+
+ 
 ## How to use   
 ```python
 # intall project   
@@ -25,28 +39,30 @@ The TimeSformer is an attention-based video classifier. FastTimeSformer adds to 
 import torch
 from fast_timesformer.model import FastTimeSformer
 
-b, f, c, h, w = 16, 5, 3, 128, 128
+b, f, c, h, w = 16, 5, 3, 512, 512
 x = torch.randn(b, f, c, h, w)
-model = FastTimeSformer(...)
+model = FastTimeSformer(f, c, h, w, num_classes = 2, attn_mechanism = 'fastformer')
 
 model(x)
 ```
 
-Or you can use the fast attention layer directly:
+You can also use the fast attention layers directly for a different model:
 
 ```python
-from fast_timesformer.model import DividedAttention
+from fast_timesformer.model import FastAttention, RegularAttention
 
-
-x = torch.randn(b, n*f + 1, dim) 
-
-attention = DividedAttention(dim, dim_head = dim_head, heads = heads, dropout = dropout)
-
-time_attended = attention(x, 'b (f n) d', '(b n) f d', n = n)        # attention across frames
-space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention across patches
+b, n, d = 16, 32, 64
+x = torch.randn(b, n, d) 
+fast_attn = FastAttention(dim = d)
+reg_attn = RegularAttention(dim = d)
+ 
+attended_fastformer = fast_attn(x)
+attended_regular = reg_attn(x)
 ```
 
 ## Citations
+
+Papers referenced:
 ```
 @misc{choromanski2021rethinking,
       title={Rethinking Attention with Performers}, 
@@ -85,9 +101,10 @@ space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention
       archivePrefix={arXiv},
       primaryClass={cs.CL}
 }
+ 
 ```
-The code here was built on top of a couple repositories by lucidrains:
-1. [performer_pytorch](https://github.com/lucidrains/performer-pytorch)
-2. [timesformer_pytorch](https://github.com/lucidrains/timesformer-pytorch)
+ 
+Portions of the code was built on top of a couple repositories by lucidrains:
+1. [performer-pytorch](https://github.com/lucidrains/performer-pytorch)
+2. [timesformer-pytorch](https://github.com/lucidrains/timesformer-pytorch)
 
-```   
