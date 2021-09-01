@@ -30,7 +30,6 @@ The following graph measures the runtime of a forward pass through TimeSformer u
  
 ## How to use   
 ```python
-# intall project   
 !pip install git+https://github.com/adam-mehdi/FastTimeSformer.git
 
 import torch
