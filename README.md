@@ -13,23 +13,20 @@ I provide extensive documentation in the docstrings... Enjoy!
 ## Options
 
 - `fastformer` implements the linear complexity additive attention mechanism presented in the recent paper, "FastFormer: Additive Attention Can Be All You Need" (Aug 2021)
-<additive attn mechanism>
-![](https://dingyue.ws.126.net/2021/0827/887f9828p00qyhdsf0018d200u000gvg00zk00jz.png)
  
  - `performer` provides the linear complexity attention approximation achieved via FAVOR+, a method of sampling orthogonal random features, presented in "Rethinking Attention with Performers" (Sept 2020)
  
-![](https://1.bp.blogspot.com/-pQ8s4X2qXjI/X5Ib6nLtxWI/AAAAAAAAGtI/C7dmMqV3Gu0NGYtmi5Gqjkr_Pqun5T2MwCLcBGAsYHQ/s1428/image10.jpg) 
-
  - `regular` is the standard quadratic complexity attention used in the TimeSformer Paper, "Is Space-Time Attention All You Need for Video Understanding?" (Feb 2021)
  
 ## Relative performance
  
-The following graph measures the runtime of a forward pass through TimeSformer using 
+The following graph measures the runtime of a forward pass through TimeSformer using the different attention techniques. The input clips are of shape `(b, f, c, h, w)` where each element is `(16, 5, 3, x, x)`.
 
-- Fastformer outperforms regular attention at mid-to-large image resolutions. Note too that fastformer 
+![]()
+
+- Fastformer outperforms regular attention at mid-to-large image resolutions. Note too that fastformer demands less memory, so in practice we can increase the batch size using it.
 - If you are working with small images or with few frames, using regular attention is optimal.
-- Performer is not performing. It seems creating the softmax kernel is taking longer than computing the actual quadratic attention map, even for these large inputs. This part of the code is from lucidrain's performer-pytorch repository
-
+- Performer is not performing. It seems creating the softmax kernel is taking longer than computing the actual quadratic attention map, even for these large inputs. This part of the code originates from lucidrain's performer-pytorch repository -- not sure how the original authors sped it up.
  
 ## How to use   
 ```python
