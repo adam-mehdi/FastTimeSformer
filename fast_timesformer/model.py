@@ -363,7 +363,8 @@ class FastTimeSformer(nn.Module):
         proj_dropout = 0.,
         rotary_emb = True,
         attn_mechanism = 'fastformer',
-        attn_type = 'divided'
+        attn_type = 'divided',
+        frames_first = True
     ):
         """
         Video transformer generalized to videos. Approximates divided space-time attention
@@ -394,8 +395,10 @@ class FastTimeSformer(nn.Module):
                             'fastformer', 'performer', or 'regular'.
             attn_type (str): determines whether to attend over space and time jointly
                             or in a divided fashion. Options are 'joint' or 'divided'.
+            frames_first (bool): whether `forward` consumes video clips of shape `(b, f, c, h, w)`.
+                            if true or of shape `(b, c, f, h, w)` if false.
 
-        NOTE: `forward` consumes video clips of shape `(b, f, c, h, w)`.
+        NOTE: 
         """
         super().__init__()
 
@@ -426,11 +429,15 @@ class FastTimeSformer(nn.Module):
             attn_drop=attn_dropout, proj_drop=proj_dropout, attn_mechanism=attn_mechanism, rotary_emb=rotary_emb, attn_type=attn_type
             )
         self.blocks = nn.ModuleList([TimeSformerBlock(**block_args) for _ in range(depth)])
-        
+        self.frames_first = frames_first
 
     def forward(self, video, mask = None):
-        b, f, _, h, w, device, p = *video.shape, video.device, self.patch_size
-
+        b, f, c, h, w, device, p = *video.shape, video.device, self.patch_size
+        
+        if not self.frames_first: 
+            f, c = c, f
+            video = rearrange(video, 'b c f h w -> b f c h w')
+            
         # video to patch embeddings
         video = rearrange(video, 'b f c (h p1) (w p2) -> b (f h w) (p1 p2 c)', p1 = p, p2 = p)
         tokens = self.project_in(video)
