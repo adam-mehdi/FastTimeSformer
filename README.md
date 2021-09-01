@@ -6,7 +6,7 @@
 
 </div>
  
-The TimeSformer is an attention-based video classifier. FastTimeSformer adds the capacity to use accelerated attention approximations. It provides three options: `fastformer`, `performer` and `regular`.
+The TimeSformer is an attention-based video classifier. FastTimeSformer adds to it accelerated attention approximations. It provides three options: `fastformer`, `performer` and `regular`, all of which support enhanced relative position embeddings.
 
 ## Options
 
@@ -31,8 +31,8 @@ model = FastTimeSformer(...)
 
 model(x)
 ```
-**Under Construction**
-Or you can use the fast space-time attention layer directly:
+
+Or you can use the fast attention layer directly:
 
 ```python
 from fast_timesformer.model import DividedAttention
@@ -75,6 +75,15 @@ space_attended = attention(x, 'b (f n) d', '(b f) n d', f = f)       # attention
       eprint={2102.05095},
       archivePrefix={arXiv},
       primaryClass={cs.CV}
+}
+ 
+@misc{su2021roformer,
+      title={RoFormer: Enhanced Transformer with Rotary Position Embedding}, 
+      author={Jianlin Su and Yu Lu and Shengfeng Pan and Bo Wen and Yunfeng Liu},
+      year={2021},
+      eprint={2104.09864},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
 }
 
 The code here was built on top of a couple repositories by lucidrains:
