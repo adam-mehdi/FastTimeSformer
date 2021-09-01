@@ -39,7 +39,7 @@ b, f, c, h, w = 16, 5, 3, 512, 512
 x = torch.randn(b, f, c, h, w)
 model = FastTimeSformer(f, c, h, w, num_classes = 2, attn_mechanism = 'fastformer')
 
-model(x)
+out = model(x)
 ```
 
 You can also use the fast attention layers directly for a different model:
