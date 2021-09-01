@@ -8,8 +8,7 @@ from torch import nn, einsum
 import torch.nn.functional as F
 from einops import rearrange, repeat, reduce
 
-from fast_timesformer.rotary import RotaryEmbedding, AxialRotaryEmbedding, apply_rot_emb
-
+from fast_timesformer.rotary import apply_rot_emb, AxialRotaryEmbedding, RotaryEmbedding, gaussian_orthogonal_random_matrix, softmax_kernel
 
 ################################################# HELPERS #######################################################
 
@@ -65,23 +64,55 @@ class DropPath(nn.Module):
         return drop_path(x, self.drop_prob, self.training)
 
 
+################################### REGULAR (QUADRATIC COMPLEXITY) ATTENTION #########################################
 
-######################################### PERFORMER (FAVOR) ATTENTION #############################################
-  
-# regular attention for class token and if specified
 class RegularAttention(nn.Module):
-    def __init__(self, **kwargs):
-        super().__init__()
+    def __init__(self, dim, dim_head = 64, qkv_bias=False, qk_scale = None, attn_drop = 0., proj_drop = 0., **kwargs):
+        """
+        Applies regular, quadratic complexity multi-head attention. 
 
-    def forward(self, q, k, v):
-        sim = torch.einsum('b i d, b j d -> b i j', q, k)
-        scale = q.shape[-1]**-.5
-        attn = F.Softmax(sim * scale, dim=-1)
-        out = einsum('b i j, b j d -> b i d', attn, v)
-        return out
+        Args:
+            dim (int): dimension of each token
+            dim_head (int): size of each head for the multi-head attention
+            qkv_bias (bool): whether to include bias in to_qkv projection
+            qk_scale (float): scaling factor in softmax; defaults to 1/sqrt(head_dim)
+            attn_drop (float): dropout rate applied to the attention distribution
+            proj_drop (float): probability of zeroing each element at the end
+        """
+        super().__init__()
+        assert dim % dim_head == 0, f'dim {dim} must be a multiple of dim_head {dim_head}'
+        self.scale = qk_scale or dim_head**-.5
+        self.dim_head = dim_head
+        self.heads = dim // dim_head
+
+        self.to_qkv = nn.Linear(dim, 3*dim, bias = qkv_bias)
+        self.attn_drop = nn.Dropout(p=attn_drop)
+
+        self.to_out = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(p=proj_drop)
+        
+
+    def forward(self, x, rot_emb = None):
+        # create q, k, v with heads
+        qo, ko, vo = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(partial(rearrange, pattern = 'b n (h d) -> (b h) n d', d = self.dim_head), (qo, ko, vo))
+
+        # add rotary embeddings, if applicable
+        if rot_emb is not None: q, k = apply_rot_emb(q, k, rot_emb)
+        
+        # compute attention distribution
+        sim = torch.einsum('bid, bjd -> bij', q, k) * self.scale
+        attn = self.attn_drop(sim.softmax(dim = -1))
+
+        # calculate interaction between attn distribution and values, and project out
+        res = rearrange(attn @ v, '(b h) n d -> b n (h d)', h = self.heads)
+        return self.proj_drop(self.to_out(res))
+
+
+######################################### PERFORMER (FAVOR) ATTENTION ####################################################
   
 class PerformerAttention(nn.Module):
-    def __init__(self, dim_heads = 64, nb_features = None, ortho_scaling = 0, kernel_fn = nn.ReLU(), **kwargs):
+    def __init__(self, dim, dim_head = 64, nb_features = None, ortho_scaling = 0, kernel_fn = nn.ReLU(), qkv_bias = False, **kwargs):
         """
         Given q, k, v of shape `(B, n_heads, n_tokens, head_dim)`, compute attention approximation a la Performers.
 
@@ -89,19 +120,25 @@ class PerformerAttention(nn.Module):
             dim_head (int): size of each head in the multi-head attention
             nb_features (int): number of gausian orthogonal random features omega. 
                                Default: `int(dim_heads * math.log(dim_heads)`.
+            ortho_scaling (int): scaling factor for the orthogonal random features
+            kernel_fn (nn.Module): defines function to approximate with FAVOR+ framework
+            qkv_bias (bool): whether to include bias in to_qkv projection
         """
         super().__init__()
-        nb_features = nb_features if nb_features is not None else int(dim_heads * math.log(dim_heads))
+        nb_features = nb_features if nb_features is not None else int(dim_head * math.log(dim_head))
 
-        self.dim_heads = dim_heads
+        self.dim_head = dim_head
         self.nb_features = nb_features
         self.ortho_scaling = ortho_scaling
 
-        self.create_projection = partial(gaussian_orthogonal_random_matrix, nb_rows = self.nb_features, nb_columns = dim_heads, scaling = ortho_scaling)
+        self.create_projection = partial(gaussian_orthogonal_random_matrix, nb_rows = self.nb_features, nb_columns = dim_head, scaling = ortho_scaling)
         projection_matrix = self.create_projection()
         self.register_buffer('projection_matrix', projection_matrix)
 
         self.kernel_fn = kernel_fn
+
+        self.to_qkv = nn.Linear(dim, 3*dim, bias = qkv_bias)
+        self.to_out = nn.Linear(dim, dim)
 
 
     @torch.no_grad()
@@ -110,251 +147,312 @@ class PerformerAttention(nn.Module):
         self.projection_matrix.copy_(projections)
         del projections
 
-    def forward(self, q, k, v):
-        "Shape: (B, heads - gh, N, dim_heads)"
-        device = q.device
+    def forward(self, x, rot_emb = None):
+        # create q, k, v with heads
+        qo, ko, vo = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(partial(rearrange, pattern = 'b n (h d) -> (b h) n d', d = self.dim_head), (qo, ko, vo))
+
+        # add rotary embeddings, if applicable
+        if rot_emb is not None: q, k = apply_rot_emb(q, k, rot_emb)
         
-        create_kernel = partial(softmax_kernel, projection_matrix = self.projection_matrix, device = device)
-        q = create_kernel(q, is_query = True) 
-        k = create_kernel(k, is_query = False)
+        # create Q' and K' such that Q' @ K'.T approximates Softmax(Q @ K.T)
+        q, k, v = map(partial(rearrange, pattern = '(b h) n d -> b h n d', b = x.shape[0]), (q, k, v))
+        create_kernel = partial(softmax_kernel, projection_matrix = self.projection_matrix, device = q.device)
+        q_prime = create_kernel(q, is_query = True) 
+        k_prime = create_kernel(k, is_query = False)
 
-        out = linear_attention(q, k, v)
-        return out
+        # multiply out D_inv @ (Q' @ (K' @ V)) where D_inv is the scaling factor
+        k_cumsum = k.sum(dim = -2)
+        D_inv = 1. / torch.einsum('...nd,...d->...n', q, k_cumsum.type_as(q))
+        context = torch.einsum('...nd,...ne->...de', k, v)
+        out = torch.einsum('...de,...nd,...n->...ne', context, q, D_inv)
 
-################################################## FASTFORMER ATTENTION ######################################
+        out = rearrange(out, 'b h n d -> b n (h d)', d=self.dim_head)
+        return self.to_out(out)
 
-class FastformerAttention3d(nn.Module):
-    def __init__(self, dim, n, dim_head = 64, heads = 8, dropout = 0.):
+################################################## FASTFORMER ATTENTION ############################
+
+class FastformerAttention(nn.Module):
+    def __init__(self, dim, dim_head = 64, proj_drop = 0., qkv_bias = False, qk_scale = None, **kwargs):
         """
         Applies linear complexity fast attention from the fastformer paper.
 
         Args:
             dim (int): dimension of each token
-            n (int): size of each input sequence
             dim_head (int): size of each head for the multi-head attention
-            heads (int): number of heads to for the multi-head attention
-
-        NOTE: Input `x` is of shape (bs, n, dim)
+            drop (float): probability of zeroing each element at the end
+            qkv_bias (bool): whether to include bias in to_qkv projection
+            qk_scale (float): scaling factor in softmax; defaults to 1/sqrt(head_dim)
         """
+
         super().__init__()
-
-        self.scale = dim_head**-.5
+        assert dim % dim_head == 0, f'dim {dim} must be a multiple of dim_head {dim_head}'
+        self.scale = qk_scale or dim_head**-.5
         self.dim_head = dim_head
+        self.heads = dim // dim_head
 
-        self.to_qkv = nn.Linear(dim, *3)
-        self.Wq = nn.Linear(dim_head, n)
-        self.Wk = nn.Linear(dim_head, n)
-        self.fc_out = nn.Linear(dim, dim)
-        self.drop = nn.Dropout(dropout)
+        self.to_qkv = nn.Linear(dim, 3*dim, bias = qkv_bias)
+        self.Wq = nn.Linear(dim_head, 1, bias = False)
+        self.Wk = nn.Linear(dim_head, 1, bias = False)
+
+        self.to_out = nn.Linear(dim, dim)
+        self.drop = nn.Dropout(p=proj_drop)
         
 
-    def forward(self, x):
-        # create queries, keys, values
-        qo, ko, vo = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(partial(rearrange, pattern = 'b n (h d) -> b h n d', d = self.dim_head), (qo, ko, vo))
+    def forward(self, x, rot_emb = None):
+        # create q, k, v with heads
+        qo, ko, vo = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(partial(rearrange, pattern = 'b n (h d) -> (b h) n d', d = self.dim_head), (qo, ko, vo))
 
-        # create global query vector
-        A = F.softmax(self.Wq(q) * self.scale, dim = -1)
-        q_global = reduce(A @ q, 'b h n d -> b h n 1', 'sum')
+        # add rotary embeddings, if applicable  
+        if rot_emb is not None: q, k = apply_rot_emb(q, k, rot_emb)
+                
+        # compute query attention logits and global query vector
+        alpha = F.softmax(self.Wq(q) * self.scale, dim = -2)
+        q_global = reduce(alpha * q, 'b n d -> b 1 d', 'sum')
 
-        # use global query vector to create global key vector
-        p = q_global*k
-        B = F.softmax(self.Wk(p) * self.scale, dim = -1)
-        k_global = reduce(B @ p, 'b h n d -> b h n 1', 'sum')
+        # calculate key attention logits and global key vector
+        p = q_global * k
+        beta = F.softmax(self.Wk(p) * self.scale, dim = -2)
+        k_global = reduce(beta * p, 'b n d -> b n 1', 'sum') 
 
-        # element-wise product global query & vector and query residual-like addition
-        u = rearrange(k_global*v, 'b h n d -> b n (h d)')
-        out = self.to_out(u) + qo
-        return out
+        # compute key-value interaction and output transformation
+        u = rearrange(k_global * v, '(b h) n d -> b n (h d)', h = self.heads)
+        r = self.drop(self.to_out(u))
+        return r + qo
 
-################################################# DIVIDED ATTENTION #########################################
+################################################# TIMESFORMER BLOCK #########################################
 
-# 3d attention backbone
-class DividedAttention(nn.Module):
+class TimeSformerBlock(nn.Module):
     def __init__(
         self,
         dim,
+        frames,
+        height_patches,
+        width_patches,
         dim_head = 64,
         heads = 8,
-        dropout = 0.,
-        attn_type = 'fastformer'
+        drop_path = 0.1,
+        attn_drop = 0.,
+        proj_drop = 0.,
+        qkv_bias = False,
+        mlp_ratio = 4,
+        qk_scale = None,
+        rotary_emb = True,
+        attn_mechanism = 'fastformer',
+        attn_type = 'divided',
     ):
+        """
+        Divided space-time attention with the capacity of linear complexity using
+        fastformer or performer attention approximations.
+
+        Args: 
+            dim (int): size of each token in the input sequence `x`. Equal 
+                            to `channels * patch_size**2`.
+            frames (int): number of frames of the input video clip
+            height_patches (int): number of patches in the height, height // patch_size
+            width_patches (int): number of patches in the width, width // patch_size
+            dim_head (int): size of each head for the multi-head self-attention applied
+            heads (int): number of heads for the multi-head self-attention applied
+            drop_path (float): rate of DropPath
+            mlp_ratio (float): how much to scale `dim` for the hidden dim of MLP
+            attn_drop (float): dropout probability in the attention layers
+            proj_drop (float): dropout rate in feed forward layer and attention output fc
+            qkv_bias (bool): whether the projection of `x` to qkv will include bias term
+            qk_scale (float): scaling factor in softmax; defaults to 1/sqrt(head_dim)
+            rotary_emb (bool): whether to use RoPE rotary embeddings in attention
+            attn_mechanism (str): type of accelerated divided attention to use. 
+                            Options are 'fastformer', 'performer', or 'regular'.
+            attn_type (str): determines whether to attend over space and time jointly
+                            or in a divided fashion. Options are 'joint' or 'divided'.
+            
+
+        Note: input `x` is of shape (b, seq_length + 1, patch_dim) where `+ 1`
+                is due to the class token prepended to the sequence.
+
+        """
         super().__init__()
+
+        # assert arguments are valid
         assert dim % heads == 0, 'dimension must be divisible by number of heads'
-        self.heads = heads
+        assert attn_mechanism in ['fastformer', 'performer', 'regular'], 'invalid attn mechanism option'
+        assert attn_type in ['joint', 'divided'], 'invalid option for attn_type'
+
+        self.frames, self.height_patches, self.width_patches, self.heads = frames, height_patches, width_patches, heads
         self.scale = dim_head ** -0.5
         inner_dim = dim_head * heads
+        self.attn_type = attn_type
 
-        self.class_attn = RegularAttention()
         attn_types = {'performer': PerformerAttention, 'fastformer': FastformerAttention, 'regular': RegularAttention}
-        self.fast_attn = attn_types['attn_type'](dim_head)
+        attn_args = dict(dim=dim, dim_head=dim_head, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=proj_drop)
+        self.attn_s = PreNorm(dim, attn_types[f'{attn_mechanism}'](**attn_args))
 
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        )
+        self.mlp = PreNorm(dim, FeedForward(dim=dim, dropout=proj_drop, mult=mlp_ratio))
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
-    def forward(self, x, einops_from, einops_to, cls_mask = None, rot_emb = None, **einops_dims):
-        h = self.heads
-        q, k, v = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h = h), (q, k, v))
+        # temporal attention parameters
+        if attn_type == 'divided':
+            self.attn_t = PreNorm(dim, attn_types[f'{attn_mechanism}'](**attn_args))
+            self.fc_t = nn.Linear(dim, dim)
 
-        # splice out classification token at index 1
-        (cls_q, q_), (cls_k, k_), (cls_v, v_) = map(lambda t: (t[:, :1], t[:, 1:]), (q, k, v))
 
-        # let classification token attend to key / values of all patches across time and space
-        cls_out = self.class_attn(cls_q, k, v, mask = cls_mask)
+    def forward(self, x, frame_rot_emb = None, image_rot_emb = None, **kwargs):
+        h, w, f = self.height_patches, self.width_patches, self.frames
 
-        # rearrange across time or space
-        q_, k_, v_ = map(lambda t: rearrange(t, f'{einops_from} -> {einops_to}', **einops_dims), (q_, k_, v_))
+        # attend across time and space jointly
+        if self.attn_type == 'joint':
+            x = self.drop_path(self.attn_s(x))
+            x = self.drop_path(self.mlp(x))
+            return x
 
-        # add rotary embeddings, if applicable
-        if rot_emb is not None:
-            q_, k_ = apply_rot_emb(q_, k_, rot_emb)
+        # divided spacetime attention
+        else:
+            ## Temporal 
+            # remove classification token prepending each sequence in the batch
+            init_cls_token, xt = x[:, :1, :], x[:, 1:, :]
+            rep_cls_token = repeat(init_cls_token, 'b 1 m -> (b f) 1 m', f=f)
 
-        # expand cls token keys and values across time or space and concat
-        r = q_.shape[0] // cls_k.shape[0]
-        cls_k, cls_v = map(lambda t: repeat(t, 'b () d -> (b r) () d', r = r), (cls_k, cls_v))
+            # rearrange so that we attend across time
+            res_t = rearrange(xt, 'b (h w f) m -> (b h w) f m', h=h, f=f)
 
-        k_ = torch.cat((cls_k, k_), dim = 1)
-        v_ = torch.cat((cls_v, v_), dim = 1)
+            # multi-head attention across time
+            res_t = self.drop_path(self.attn_t(res_t, rot_emb = frame_rot_emb))
 
-        # attention
-        q_, k_, v_ = map(lambda t: rearrange(t, '(b h) f d -> b h f d', h = h), (q_, k_, v_))
-        out = self.fast_attn(q_, k_, v_)
+            # rearrange, linear projection, and residual connection
+            res_t = rearrange(res_t, '(b h w) t m -> b (h w t) m', h=h, w=w)
+            out_t = self.fc_t(res_t) + xt
 
-        # merge back time or space
-        out = rearrange(out, 'b h f d -> (b h) f d', h=h)
-        out = rearrange(out, f'{einops_to} -> {einops_from}', **einops_dims)
+            ## Spatial
+            # rearrange and concat the class token
+            xs = rearrange(out_t, 'b (h w t) m -> (b t) (h w) m', h=h, w=w)
+            xs = torch.cat((rep_cls_token, xs), 1)
 
-        # concat back the cls token
-        out = torch.cat((cls_out, out), dim = 1)
+            # attend over space
+            res_s = self.drop_path(self.attn_s(xs, rot_emb = image_rot_emb))
 
-        # merge back the heads
-        out = rearrange(out, '(b h) n d -> b n (h d)', h = h)
+            # average across frames for the cls token
+            cls_token = reduce(res_s[:,0,:], '(b f) m -> b 1 m', 'mean', f=f)
 
-        # combine heads out
-        return self.to_out(out)
-      
+            # rearrange output of spatial attention
+            out_s = rearrange(res_s[:,1:,:], '(b f) (h w) m -> b (h w f) m', f=f, h=h)
 
-######################################################## TIMESFORMER ######################################
+            # residual connection
+            x = torch.cat((init_cls_token, out_t), 1) + torch.cat((cls_token, out_s), 1)
+
+            ## Feedforward
+            x = x + self.drop_path(self.mlp(x))
+            return x      
+
+###################################################### FASTTIMESFORMER ######################################
 
 class FastTimeSformer(nn.Module):
     def __init__(
         self,
-        *,
-        num_frames,
+        frames,
+        channels,
+        height, 
+        width,
         num_classes,
         dim = 128,
-        image_size = 224,
         patch_size = 16,
-        channels = 3,
         depth = 12,
         heads = 8,
         dim_head = 64,
+        drop_path = .1,
         attn_dropout = 0.,
-        ff_dropout = 0.,
+        proj_dropout = 0.,
         rotary_emb = True,
-        
+        attn_mechanism = 'fastformer',
+        attn_type = 'divided'
     ):
         """
         Video transformer generalized to videos. Approximates divided space-time attention
         with the linearly-scalable FAVOR+ method.
 
         Args:
-            num_frames (int): number of frames in each batch
-            num_classes (int): number of classes in the classification task
-            dim (int): size of each token
-            image_size (int): image height or width. Only square images are supported.
-            patch_size (int): height or width of each chunk into which the image is divided
+            frames (int): number of frames in each batch
             channels (int): number of channels in each frame's image
+            height (int): height of each frame in the clip
+            width (int): width of each frame in the clip
+            num_classes (int): number of classes in the classification task. If binary
+                            classification, `num_classes` should be 1.
+            dim (int): size of each token when the clip is converted into a flat sequence
+            patch_size (int): number of elements of each chunk into which the image is divided
+                            in attention
             depth (int): amount of transformer blocks to use. A transformer block consists
-                            of time attention, spatial attention, and feed-forward layers
+                            of a time attention, spatial attention, and feed-forward layer
             heads (int): number of heads for the multi-head self-attention applied
-            dim_head (int): size of each head 
+            dim_head (int): size of each head for the multi-head self-attention applied
+            drop_path (float): rate of DropPath
             attn_dropout (float): probability of zeroing out each element in the output 
                             of each attention layer.
-            ff_dropout (float): probability of zeroing out each element in the output of 
-                            each feed-forward layer.
+            proj_dropout (float): probability of zeroing out each element in the output of 
+                            each feed-forward layer and the output fc of attention.
             rotary_emb (bool): whether to use relative positional encodings using the RoPE
                             technique.
-            attention_type (str): type of accelerated divided attention to use. Options are
+            attn_mechanism (str): type of accelerated divided attention to use. Options are 
                             'fastformer', 'performer', or 'regular'.
+            attn_type (str): determines whether to attend over space and time jointly
+                            or in a divided fashion. Options are 'joint' or 'divided'.
 
-        NOTE: `forward` consumes videos of shape `(b, f, c, h, w)`.
+        NOTE: `forward` consumes video clips of shape `(b, f, c, h, w)`.
         """
         super().__init__()
-        assert image_size % patch_size == 0, 'Image dimensions must be divisible by the patch size.'
 
-        num_patches = (image_size // patch_size) ** 2
-        num_positions = num_frames * num_patches
-        patch_dim = channels * patch_size ** 2
-        assert h % p == 0 and w % p == 0, f'height {h} and width {w} of video must be divisible by the patch size {p}'
+        # init parameters
+        f, c, h, w = frames, channels, height, width
+        self.heads, self.patch_size = heads, patch_size
+        assert h % patch_size == 0 and w % patch_size == 0, f'height {h} and width {w} must be divisible by patch size {patch_size}'
         
-        (image_size // patch_size)**2
+        self.hp, self.wp = (h // patch_size), (w // patch_size)
+        seq_length = f * self.hp * self.wp
+        patch_dim = c * (patch_size ** 2)
 
-        self.heads = heads
-        self.patch_size = patch_size
-        self.to_patch_embedding = nn.Linear(patch_dim, dim)
-        self.cls_token = nn.Parameter(torch.randn(1, dim))
-
+        # positional embeddings
         self.use_rotary_emb = rotary_emb
         if rotary_emb:
             self.frame_rot_emb = RotaryEmbedding(dim_head)
             self.image_rot_emb = AxialRotaryEmbedding(dim_head)
         else:
-            self.pos_emb = nn.Embedding(num_positions + 1, dim)
+            self.pos_emb = nn.Embedding(seq_length + 1, dim)
+        
+        # model parameters
+        self.project_in = nn.Linear(patch_dim, dim)
+        self.cls_token = nn.Parameter(torch.randn(1, dim))
+        self.to_out = PreNorm(dim, nn.Linear(dim, num_classes))
 
-
-        self.layers = nn.ModuleList([])
-        for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                PreNorm(dim, FastSpacetimeAttention(dim, dim_head = dim_head, num_frames = num_frames, heads = heads, dropout = attn_dropout)),
-                PreNorm(dim, FastSpacetimeAttention(dim, dim_head = dim_head, num_frames = num_frames, heads = heads, dropout = attn_dropout)),
-                PreNorm(dim, FeedForward(dim, dropout = ff_dropout))
-            ]))
-
-        self.to_out = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, num_classes)
-        )
+        block_args = dict(
+            dim=dim, frames=f, height_patches=self.hp, width_patches=self.wp, dim_head=dim_head, drop_path=drop_path, 
+            attn_drop=attn_dropout, proj_drop=proj_dropout, attn_mechanism=attn_mechanism, rotary_emb=rotary_emb, attn_type=attn_type
+            )
+        self.blocks = nn.ModuleList([TimeSformerBlock(**block_args) for _ in range(depth)])
+        
 
     def forward(self, video, mask = None):
-        b, f, _, h, w, *_, device, p, n = *video.shape, video.device, self.patch_size, self.n_patches
+        b, f, _, h, w, device, p = *video.shape, video.device, self.patch_size
 
         # video to patch embeddings
         video = rearrange(video, 'b f c (h p1) (w p2) -> b (f h w) (p1 p2 c)', p1 = p, p2 = p)
-        tokens = self.to_patch_embedding(video)
+        tokens = self.project_in(video)
 
         # add cls token
         cls_token = repeat(self.cls_token, 'n d -> b n d', b = b)
         x =  torch.cat((cls_token, tokens), dim = 1)
 
         # positional embedding
-        frame_pos_emb = None
-        image_pos_emb = None
+        frame_pos_emb, image_pos_emb = None, None
         if not self.use_rotary_emb:
             x += self.pos_emb(torch.arange(x.shape[1], device = device))
         else:
             frame_pos_emb = self.frame_rot_emb(f, device = device)
-            image_pos_emb = self.image_rot_emb(hp, wp, device = device)
+            image_pos_emb = self.image_rot_emb(self.hp, self.wp, device = device)
 
-        # calculate masking for uneven number of frames
-        frame_mask = None
-        cls_attn_mask = None
-        if mask is not None:
+        # blocks constitute time attn, space attn, then feedforward layer
+        for block in self.blocks: 
+            x = block(x, frame_rot_emb = frame_pos_emb, image_rot_emb = image_pos_emb)
 
-            cls_attn_mask = repeat(mask, 'b f -> (b h) () (f n)', n = n, h = self.heads)
-            cls_attn_mask = F.pad(cls_attn_mask, (1, 0), value = True)
-
-        # time and space attention
-        for (time_attn, spatial_attn, ff) in self.layers:
-            # Note: Frame mask for `time_attn` removed so that we can apply fast attention.
-            x = time_attn(x, 'b (f n) d', '(b n) f d', n = n, cls_mask = cls_attn_mask, rot_emb = frame_pos_emb) + x
-            x = spatial_attn(x, 'b (f n) d', '(b f) n d', f = f, cls_mask = cls_attn_mask, rot_emb = image_pos_emb) + x
-            x = ff(x) + x
-
+        # extract class token and project to output
         cls_token = x[:, 0]
         return self.to_out(cls_token)
+        
         
