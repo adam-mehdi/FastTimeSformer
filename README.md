@@ -6,7 +6,7 @@
 
 </div>
  
-The TimeSformer is an attention-based video classifier. FastTimeSformer adds to it accelerated attention approximations. It provides three options: `fastformer`, `performer` and `regular`, all of which support enhanced relative position embeddings.
+The TimeSformer is an attention-based video classifier. FastTimeSformer adds accelerated attention approximations. It provides three options: `fastformer`, `performer` and `regular`, all of which support enhanced relative position embeddings.
 
 I provide extensive documentation in the docstrings... Enjoy!
 
